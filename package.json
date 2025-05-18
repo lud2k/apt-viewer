@@ -1,0 +1,24 @@
+{
+  "name": "threejs-room-project",
+  "version": "1.0.0",
+  "description": "A project to render a 3D room using Three.js with navigation functionality.",
+  "main": "src/main.js",
+  "scripts": {
+    "live": "live-server src",
+    "start": "http-server src",
+    "build": "echo 'Build step not defined'"
+  },
+  "dependencies": {
+    "live-server": "^1.2.2",
+    "three": "^0.152.0"
+  },
+  "keywords": [
+    "threejs",
+    "3d",
+    "webgl",
+    "model",
+    "navigation"
+  ],
+  "author": "",
+  "license": "ISC"
+}
