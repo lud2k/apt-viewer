@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Birthday Adventure</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #202028;
+            overflow: hidden; /* Prevent scrolling */
+            touch-action: none; /* Prevent zoom/scroll on touch */
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #87CEEB;
+        }
+
+        canvas {
+            display: block;
+            background-color: transparent;
+        }
+
+        /* Mobile Controls */
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            height: 100px;
+            pointer-events: none; /* Let clicks pass through empty space */
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        .btn-group {
+            pointer-events: auto;
+            display: flex;
+            gap: 15px;
+        }
+
+        .d-pad-btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 255, 255, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 30px;
+            color: white;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .d-pad-btn:active {
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        /* Restart Button (Hidden by default) */
+        #restartBtn {
+            position: absolute;
+            top: 60%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #FF69B4;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            display: none;
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #333;
+            background: rgba(255,255,255,0.6);
+            padding: 5px 10px;
+            border-radius: 10px;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="instructions">Use Arrows or Touch Buttons</div>
+
+    <button id="restartBtn">Play Again</button>
+
+    <div id="controls">
+        <div class="btn-group">
+            <div class="d-pad-btn" id="btnLeft">←</div>
+            <div class="d-pad-btn" id="btnRight">→</div>
+        </div>
+        <div class="btn-group">
+            <div class="d-pad-btn" id="btnJump">↑</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+
+    // Resize handling
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Game Constants
+    const GRAVITY = 0.6;
+    const JUMP_STRENGTH = 13; // Higher jump
+    const SPEED = 5;
+    const LEVEL_LENGTH = 3000; // Much longer level
+
+    // State
+    let gameRunning = true;
+    let won = false;
+    let particles = [];
+    let cameraX = 0;
+    let tick = 0; // For animation
+
+    // Inputs
+    const keys = { right: false, left: false, up: false };
+
+    // --- INPUT HANDLING (Keyboard & Touch) ---
+    function handleKey(code, state) {
+        if (code === 'ArrowRight') keys.right = state;
+        if (code === 'ArrowLeft') keys.left = state;
+        if (code === 'Space' || code === 'ArrowUp') keys.up = state;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        handleKey(e.code, true);
+        if(e.code === 'Space' && !player.jumping && player.grounded) {
+             player.velY = -JUMP_STRENGTH;
+             player.grounded = false;
+             player.jumping = true;
+        }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        handleKey(e.code, false);
+        if(e.code === 'Space' || e.code === 'ArrowUp') player.jumping = false;
+    });
+
+    // Touch Helpers
+    const setupTouch = (id, key) => {
+        const el = document.getElementById(id);
+        el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true;
+            if(key === 'up' && player.grounded) {
+                player.velY = -JUMP_STRENGTH;
+                player.grounded = false;
+            }
+        });
+        el.addEventListener('touchend', (e) => { e.preventDefault(); keys[key] = false; });
+    };
+
+    setupTouch('btnLeft', 'left');
+    setupTouch('btnRight', 'right');
+    setupTouch('btnJump', 'up');
+
+    restartBtn.addEventListener('click', resetGame);
+    restartBtn.addEventListener('touchstart', resetGame);
+
+    // --- GAME OBJECTS ---
+
+    const player = {
+        x: 100,
+        y: 200,
+        width: 40,
+        height: 80,
+        velX: 0,
+        velY: 0,
+        grounded: false,
+        jumping: false,
+        facingRight: true,
+
+        update: function() {
+            // Movement
+            if (keys.right) {
+                this.velX = SPEED;
+                this.facingRight = true;
+            } else if (keys.left) {
+                this.velX = -SPEED;
+                this.facingRight = false;
+            } else {
+                this.velX *= 0.8; // Friction
+            }
+
+            this.velY += GRAVITY;
+            this.x += this.velX;
+            this.y += this.velY;
+            this.grounded = false;
+
+            // Collision
+            platforms.forEach(p => {
+                const dir = colCheck(this, p);
+                if (dir === "b") {
+                    this.grounded = true;
+                    this.velY = 0;
+                } else if (dir === "t") {
+                    this.velY *= -1;
+                }
+            });
+
+            // Pit death
+            if (this.y > canvas.height + 100) resetGame();
+
+            // Win
+            if (colCheck(this, cake) !== null) winGame();
+
+            // Screen Boundaries (Left side only)
+            if (this.x < 0) this.x = 0;
+        },
+
+        draw: function() {
+            // Animation math
+            const walkOffset = (keys.left || keys.right) ? Math.sin(tick * 0.2) * 5 : 0;
+
+            const px = this.x;
+            const py = this.y;
+            const w = this.width;
+
+            // 1. Legs (Pants - Light Blue)
+            ctx.fillStyle = '#89CFF0';
+            // Left leg
+            ctx.fillRect(px + 5, py + 45, 12, 35 + walkOffset);
+            // Right leg
+            ctx.fillRect(px + 23, py + 45, 12, 35 - walkOffset);
+
+            // 2. Torso (Jacket - Light Blue)
+            // Rounded shoulders
+            ctx.beginPath();
+            ctx.moveTo(px, py + 20); // Left shoulder top
+            ctx.lineTo(px + w, py + 20); // Right shoulder top
+            ctx.lineTo(px + w - 2, py + 50); // Right hip
+            ctx.lineTo(px + 2, py + 50); // Left hip
+            ctx.fill();
+
+            // 3. Shirt (White triangle)
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.moveTo(px + 12, py + 20);
+            ctx.lineTo(px + 28, py + 20);
+            ctx.lineTo(px + 20, py + 35);
+            ctx.fill();
+
+            // 4. Tie (Dark Blue with Pattern dots)
+            ctx.fillStyle = '#2c3e50';
+            ctx.beginPath();
+            ctx.moveTo(px + 20, py + 20);
+            ctx.lineTo(px + 16, py + 45);
+            ctx.lineTo(px + 24, py + 45);
+            ctx.fill();
+            // Dots on tie
+            ctx.fillStyle = '#FF69B4'; // Pink dots
+            ctx.fillRect(px + 19, py + 28, 2, 2);
+            ctx.fillRect(px + 20, py + 35, 2, 2);
+
+            // 5. Head (Skin)
+            ctx.fillStyle = '#ffe0bd';
+            ctx.beginPath();
+            ctx.arc(px + 20, py + 12, 14, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 6. Hair (Dark, Side Part)
+            ctx.fillStyle = '#1a1a1a';
+            ctx.beginPath();
+            ctx.arc(px + 20, py + 10, 15, Math.PI, 0); // Top of head
+            ctx.lineTo(px + 35, py + 15);
+            ctx.lineTo(px + 32, py + 5); // Sideburn area
+            ctx.lineTo(px + 5, py + 5);
+            ctx.fill();
+            // Parting detail
+            ctx.fillStyle = '#1a1a1a';
+            ctx.beginPath();
+            ctx.moveTo(px + 10, py);
+            ctx.quadraticCurveTo(px+20, py-5, px+35, py+5);
+            ctx.stroke();
+
+            // 7. Glasses
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Left lens
+            ctx.arc(px + 14, py + 12, 4, 0, Math.PI * 2);
+            // Right lens
+            ctx.arc(px + 26, py + 12, 4, 0, Math.PI * 2);
+            ctx.stroke();
+            // Bridge
+            ctx.beginPath();
+            ctx.moveTo(px + 18, py + 12);
+            ctx.lineTo(px + 22, py + 12);
+            ctx.stroke();
+        }
+    };
+
+    const cake = {
+        x: LEVEL_LENGTH - 150,
+        y: 0, // Set dynamically in createLevel
+        width: 80,
+        height: 60,
+        draw: function() {
+            const cx = this.x;
+            const cy = this.y;
+
+            // Cake body
+            ctx.fillStyle = '#F5DEB3';
+            ctx.fillRect(cx, cy + 20, 80, 40);
+
+            // Icing
+            ctx.fillStyle = '#FFB6C1';
+            ctx.fillRect(cx - 5, cy, 90, 25);
+            // Drips
+            for(let i=0; i<5; i++) {
+                ctx.beginPath();
+                ctx.arc(cx + 5 + (i*18), cy + 25, 8, 0, Math.PI);
+                ctx.fill();
+            }
+
+            // Text on cake
+            ctx.fillStyle = '#FFF';
+            ctx.font = '10px Arial';
+            ctx.fillText("BDAY", cx + 25, cy + 45);
+
+            // Candles
+            ctx.fillStyle = '#FFF';
+            ctx.fillRect(cx + 20, cy - 15, 6, 15);
+            ctx.fillRect(cx + 54, cy - 15, 6, 15);
+
+            // Flames
+            const flameSize = 5 + Math.sin(tick * 0.5) * 2;
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(cx + 23, cy - 15 - flameSize/2, flameSize, 0, Math.PI*2);
+            ctx.arc(cx + 57, cy - 15 - flameSize/2, flameSize, 0, Math.PI*2);
+            ctx.fill();
+        }
+    };
+
+    // --- LEVEL GENERATION ---
+    let platforms = [];
+
+    function createLevel() {
+        platforms = [];
+        const floorY = canvas.height - 100;
+
+        // Starting ground
+        platforms.push({x: -100, y: floorY, width: 600, height: 100, color: '#65a30d'});
+
+        // Procedural-ish generation
+        let currentX = 500;
+        let currentY = floorY;
+
+        while(currentX < LEVEL_LENGTH - 200) {
+            // Random gap size (50 to 150)
+            const gap = 50 + Math.random() * 120;
+            currentX += gap;
+
+            // Random height change (-50 to +50), clamped
+            let heightChange = (Math.random() - 0.5) * 100;
+            currentY += heightChange;
+            // Clamp height so it's not off screen
+            if (currentY > floorY + 20) currentY = floorY;
+            if (currentY < floorY - 200) currentY = floorY - 200;
+
+            // Platform width
+            const pWidth = 100 + Math.random() * 150;
+
+            platforms.push({
+                x: currentX,
+                y: currentY,
+                width: pWidth,
+                height: 400, // extend down so it looks like solid ground
+                color: '#65a30d'
+            });
+
+            currentX += pWidth;
+        }
+
+        // Final Platform for cake
+        platforms.push({
+            x: LEVEL_LENGTH - 300,
+            y: floorY - 50,
+            width: 500,
+            height: 200,
+            color: '#65a30d'
+        });
+
+        // Set cake position
+        cake.y = floorY - 50 - cake.height;
+    }
+
+    function colCheck(shapeA, shapeB) {
+        var vX = (shapeA.x + (shapeA.width / 2)) - (shapeB.x + (shapeB.width / 2)),
+            vY = (shapeA.y + (shapeA.height / 2)) - (shapeB.y + (shapeB.height / 2)),
+            hWidths = (shapeA.width / 2) + (shapeB.width / 2),
+            hHeights = (shapeA.height / 2) + (shapeB.height / 2),
+            colDir = null;
+
+        if (Math.abs(vX) < hWidths && Math.abs(vY) < hHeights) {
+            var oX = hWidths - Math.abs(vX),
+                oY = hHeights - Math.abs(vY);
+            if (oX >= oY) {
+                if (vY > 0) {
+                    colDir = "t"; shapeA.y += oY;
+                } else {
+                    colDir = "b"; shapeA.y -= oY;
+                }
+            } else {
+                if (vX > 0) {
+                    colDir = "l"; shapeA.x += oX;
+                } else {
+                    colDir = "r"; shapeA.x -= oX;
+                }
+            }
+        }
+        return colDir;
+    }
+
+    function resetGame() {
+        player.x = 100;
+        player.y = 200;
+        player.velX = 0;
+        player.velY = 0;
+        won = false;
+        particles = [];
+        restartBtn.style.display = 'none';
+        createLevel();
+    }
+
+    function winGame() {
+        if(won) return;
+        won = true;
+        restartBtn.style.display = 'block';
+
+        // Explosion of confetti
+        for(let i=0; i<150; i++) {
+            particles.push({
+                x: player.x + 20,
+                y: player.y,
+                vx: (Math.random() - 0.5) * 15,
+                vy: (Math.random() - 1) * 15,
+                color: `hsl(${Math.random()*360}, 100%, 50%)`,
+                life: 150,
+                size: Math.random() * 8 + 2
+            });
+        }
+    }
+
+    function loop() {
+        // Logic
+        tick++;
+        if (!won) player.update();
+
+        // Camera Logic
+        // Center camera on player, but clamp it at start and end
+        let targetCamX = player.x - canvas.width / 3;
+        if (targetCamX < 0) targetCamX = 0;
+        if (targetCamX > LEVEL_LENGTH - canvas.width) targetCamX = LEVEL_LENGTH - canvas.width;
+
+        // Smooth camera
+        cameraX += (targetCamX - cameraX) * 0.1;
+
+        // Draw World
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(-cameraX, 0);
+
+        // Draw Clouds (Parallax-ish)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.beginPath();
+        ctx.arc(100 + cameraX * 0.8, 100, 40, 0, Math.PI*2);
+        ctx.arc(400 + cameraX * 0.9, 150, 50, 0, Math.PI*2);
+        ctx.arc(800 + cameraX * 0.85, 80, 60, 0, Math.PI*2);
+        ctx.fill();
+
+        // Draw Platforms
+        platforms.forEach(p => {
+            // Main block
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, p.width, p.height);
+            // Grass top
+            ctx.fillStyle = '#4d7c0f';
+            ctx.fillRect(p.x, p.y, p.width, 10);
+            // Decoration
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.fillRect(p.x, p.y+10, p.width, p.height);
+        });
+
+        // Draw Signposts
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(200, canvas.height - 200, 10, 100);
+        ctx.fillStyle = '#DEB887';
+        ctx.fillRect(150, canvas.height - 240, 110, 40);
+        ctx.fillStyle = '#5c4033';
+        ctx.font = '20px Arial';
+        ctx.fillText("GO ->", 170, canvas.height - 215);
+
+        cake.draw();
+        player.draw();
+
+        // Particles
+        particles.forEach((p, i) => {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, p.size, p.size);
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.3; // gravity
+            p.life--;
+            if(p.life <= 0) particles.splice(i, 1);
+        });
+
+        ctx.restore();
+
+        // UI Layer (Fixed position)
+        if (won) {
+            ctx.fillStyle = "rgba(0,0,0,0.5)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.shadowColor = "black";
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = "#FFD700";
+            ctx.font = "bold 40px Courier New";
+            ctx.textAlign = "center";
+            ctx.fillText("HAPPY BIRTHDAY!", canvas.width/2, canvas.height/2 - 50);
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = "white";
+            ctx.font = "20px Courier New";
+            ctx.fillText("You got the cake!", canvas.width/2, canvas.height/2);
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    // Init
+    createLevel();
+    loop();
+
+</script>
+</body>
+</html>
